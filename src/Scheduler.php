@@ -13,14 +13,15 @@ final class Scheduler
         }
 
         $started = microtime(true);
+        $lookaheadSeconds = self::lookaheadSeconds();
         $summary = ['processed' => 0, 'success' => 0, 'failed' => 0, 'expired' => 0, 'message' => 'OK'];
-        Logger::info('cron_started', ['limit' => $limit], 'cron');
+        Logger::info('cron_started', ['limit' => $limit, 'lookahead_seconds' => $lookaheadSeconds], 'cron');
         self::heartbeat('started', $summary);
         try {
             // Recupera mensagens presas após uma interrupção do processo.
             db()->exec("UPDATE messages SET status='scheduled', updated_at=UTC_TIMESTAMP(), last_error='Reprocessamento automático após interrupção.' WHERE status='processing' AND sent_at IS NULL AND updated_at < (UTC_TIMESTAMP() - INTERVAL 10 MINUTE)");
 
-            $stmt = db()->prepare("SELECT id, scheduled_at, TIMESTAMPDIFF(SECOND, scheduled_at, UTC_TIMESTAMP()) AS schedule_delay_seconds FROM messages WHERE status = 'scheduled' AND scheduled_at <= UTC_TIMESTAMP() AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP()) ORDER BY scheduled_at ASC LIMIT " . max(1, min(100, $limit)));
+            $stmt = db()->prepare("SELECT id, scheduled_at, TIMESTAMPDIFF(SECOND, scheduled_at, UTC_TIMESTAMP()) AS schedule_delay_seconds FROM messages WHERE status = 'scheduled' AND scheduled_at <= (UTC_TIMESTAMP() + INTERVAL {$lookaheadSeconds} SECOND) AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP()) ORDER BY scheduled_at ASC LIMIT " . max(1, min(100, $limit)));
             $stmt->execute();
             $dueMessages = $stmt->fetchAll();
             Logger::info('cron_due_messages_found', ['count' => count($dueMessages), 'messages' => array_map(static fn(array $row): array => ['id' => (int)$row['id'], 'scheduled_at' => $row['scheduled_at'], 'delay_seconds' => (int)$row['schedule_delay_seconds']], $dueMessages)], 'cron');
@@ -33,7 +34,7 @@ final class Scheduler
                     continue;
                 }
                 $result = self::processMessage($messageId);
-                $summary['max_schedule_delay_seconds'] = max((int)($summary['max_schedule_delay_seconds'] ?? 0), (int)$dueMessage['schedule_delay_seconds']);
+                $summary['max_schedule_delay_seconds'] = max((int)($summary['max_schedule_delay_seconds'] ?? 0), max(0, (int)$dueMessage['schedule_delay_seconds']));
                 $summary['processed']++;
                 $summary['success'] += $result['success'];
                 $summary['failed'] += $result['failed'];
@@ -156,6 +157,12 @@ final class Scheduler
 
         Logger::info('message_processing_finished', ['message_id' => $messageId, 'event_id' => (int)$message['event_id'], 'success' => $success, 'failed' => $failed, 'targets' => count($targets)], 'cron');
         return ['success' => $success, 'failed' => $failed];
+    }
+
+    private static function lookaheadSeconds(): int
+    {
+        $configured = app_config()['scheduler']['lookahead_seconds'] ?? 30;
+        return max(0, min(55, (int) $configured));
     }
 
     private static function heartbeat(string $state, array $summary, ?string $error = null, ?int $durationMs = null): void
