@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE TABLE IF NOT EXISTS participants (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  correlation_id VARCHAR(100) NULL,
   event_id BIGINT UNSIGNED NOT NULL,
   public_token VARCHAR(100) NOT NULL UNIQUE,
   name VARCHAR(160) NOT NULL,
@@ -139,15 +140,17 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE TABLE IF NOT EXISTS message_deliveries (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  correlation_id VARCHAR(100) NULL,
   message_id BIGINT UNSIGNED NOT NULL,
   subscription_id BIGINT UNSIGNED NOT NULL,
   participant_id BIGINT UNSIGNED NOT NULL,
-  status ENUM('queued','submitted','failed','expired') NOT NULL DEFAULT 'queued',
+  status ENUM('queued','processing','submitted','provider_accepted','provider_rejected','device_received','notification_displayed','clicked','failed','expired') NOT NULL DEFAULT 'queued',
   response_code INT NULL,
   attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   error_message TEXT NULL,
   submitted_at DATETIME NULL,
   received_at DATETIME NULL,
+  displayed_at DATETIME NULL,
   clicked_at DATETIME NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -160,6 +163,7 @@ CREATE TABLE IF NOT EXISTS message_deliveries (
 
 CREATE TABLE IF NOT EXISTS push_queue (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  correlation_id VARCHAR(100) NULL,
   subscription_id BIGINT UNSIGNED NOT NULL,
   participant_id BIGINT UNSIGNED NOT NULL,
   event_id BIGINT UNSIGNED NOT NULL,
@@ -190,3 +194,40 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   CONSTRAINT fk_audit_admin FOREIGN KEY (admin_user_id) REFERENCES admin_users(id) ON DELETE SET NULL,
   INDEX idx_audit_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS system_logs (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  level VARCHAR(20) NOT NULL,
+  channel VARCHAR(50) NOT NULL,
+  message TEXT NOT NULL,
+  request_id VARCHAR(100) NULL,
+  correlation_id VARCHAR(100) NULL,
+  admin_user_id BIGINT UNSIGNED NULL,
+  event_id BIGINT UNSIGNED NULL,
+  participant_id BIGINT UNSIGNED NULL,
+  notification_message_id BIGINT UNSIGNED NULL,
+  subscription_id BIGINT UNSIGNED NULL,
+  route VARCHAR(255) NULL,
+  http_method VARCHAR(10) NULL,
+  http_code INT NULL,
+  context_json LONGTEXT NULL,
+  ip_hash VARCHAR(100) NULL,
+  user_agent TEXT NULL,
+  created_at DATETIME NOT NULL,
+  INDEX idx_logs_created_at (created_at),
+  INDEX idx_logs_level (level),
+  INDEX idx_logs_channel (channel),
+  INDEX idx_logs_correlation (correlation_id)
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS cron_heartbeat (
+  id TINYINT UNSIGNED PRIMARY KEY DEFAULT 1,
+  last_started_at DATETIME NULL,
+  last_finished_at DATETIME NULL,
+  last_success_at DATETIME NULL,
+  last_error TEXT NULL,
+  last_duration_ms INT UNSIGNED NULL,
+  last_summary_json LONGTEXT NULL,
+  updated_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

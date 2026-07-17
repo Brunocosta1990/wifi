@@ -1,7 +1,7 @@
 # Validação técnica do pacote
 
 Data: 17/07/2026  
-Versão: 1.0.1
+Versão: 1.0.2
 
 ## Verificações executadas
 
@@ -20,4 +20,4 @@ Versão: 1.0.1
 
 ## Dependências do ambiente final
 
-A validação completa da entrega depende do HTTPS, MySQL, cURL, certificados CA, Cron e serviço Push do navegador na hospedagem real. O painel da versão 1.0.1 exibe os erros retornados por esses componentes.
+A validação completa da entrega depende do HTTPS, MySQL, cURL, certificados CA, Cron e serviço Push do navegador na hospedagem real. O painel da versão 1.0.2 exibe os erros retornados por esses componentes.

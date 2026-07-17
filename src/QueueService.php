@@ -3,18 +3,19 @@ declare(strict_types=1);
 
 final class QueueService
 {
-    public static function enqueue(array $subscription, array $payload, ?int $messageId, int $ttl): int
+    public static function enqueue(array $subscription, array $payload, ?int $messageId, int $ttl, ?string $correlationId = null): int
     {
         $ttl = max(60, min(86400, $ttl));
         $expiresAt = gmdate('Y-m-d H:i:s', time() + $ttl);
         $stmt = db()->prepare("INSERT INTO push_queue
-            (subscription_id, participant_id, event_id, message_id, payload_json, status, expires_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())");
+            (subscription_id, participant_id, event_id, message_id, correlation_id, payload_json, status, expires_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())");
         $stmt->execute([
             (int) $subscription['id'],
             (int) $subscription['participant_id'],
             (int) $subscription['event_id'],
             $messageId,
+            $correlationId,
             json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
             $expiresAt,
         ]);
@@ -67,12 +68,14 @@ final class QueueService
             $payloads = [];
             foreach ($rows as $row) {
                 if (!empty($row['message_id'])) {
-                    $pdo->prepare("UPDATE message_deliveries SET received_at=UTC_TIMESTAMP(), updated_at=UTC_TIMESTAMP() WHERE message_id=? AND subscription_id=?")
+                    $pdo->prepare("UPDATE message_deliveries SET status='device_received', received_at=UTC_TIMESTAMP(), updated_at=UTC_TIMESTAMP() WHERE message_id=? AND subscription_id=?")
                         ->execute([(int) $row['message_id'], (int) $subscription['id']]);
                 }
                 $payload = json_decode((string) $row['payload_json'], true);
                 if (is_array($payload)) {
+                    $payload['correlation_id'] = $row['correlation_id'] ?? ($payload['correlation_id'] ?? null);
                     $payloads[] = $payload;
+                    Logger::info('device_received', ['correlation_id' => $payload['correlation_id'] ?? null, 'message_id' => $row['message_id'] ?? null, 'subscription_id' => $subscription['id']], 'service-worker');
                 }
             }
 

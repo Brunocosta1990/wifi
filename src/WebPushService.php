@@ -41,7 +41,7 @@ final class WebPushService
         ];
     }
 
-    public function send(array $subscription, array $payload, int $ttl = 300): array
+    public function send(array $subscription, array $payload, int $ttl = 300, array $meta = []): array
     {
         foreach (['endpoint', 'p256dh_key', 'auth_key'] as $required) {
             if (empty($subscription[$required])) {
@@ -70,7 +70,7 @@ final class WebPushService
             return $this->pushRequest($endpoint, $parts, $encrypted, [
                 'Content-Encoding: aes128gcm',
                 'Content-Type: application/octet-stream',
-            ], $ttl);
+            ], $ttl, $meta);
         } catch (Throwable $e) {
             return ['success' => false, 'status' => 0, 'expired' => false, 'error' => $e->getMessage()];
         }
@@ -80,7 +80,7 @@ final class WebPushService
      * Envia apenas o sinal Web Push. O conteúdo é buscado pelo Service Worker
      * no próprio servidor, eliminando incompatibilidades de criptografia de payload.
      */
-    public function sendSignal(array $subscription, int $ttl = 300): array
+    public function sendSignal(array $subscription, int $ttl = 300, array $meta = []): array
     {
         if (empty($subscription['endpoint'])) {
             return ['success' => false, 'status' => 0, 'expired' => false, 'error' => 'Assinatura sem endpoint.'];
@@ -93,13 +93,13 @@ final class WebPushService
         }
 
         try {
-            return $this->pushRequest($endpoint, $parts, '', [], $ttl);
+            return $this->pushRequest($endpoint, $parts, '', [], $ttl, $meta + ['subscription_id' => $subscription['id'] ?? null]);
         } catch (Throwable $e) {
             return ['success' => false, 'status' => 0, 'expired' => false, 'error' => $e->getMessage()];
         }
     }
 
-    private function pushRequest(string $endpoint, array $parts, string $body, array $extraHeaders, int $ttl): array
+    private function pushRequest(string $endpoint, array $parts, string $body, array $extraHeaders, int $ttl, array $meta = []): array
     {
         $audience = ($parts['scheme'] ?? 'https') . '://' . $parts['host'];
         if (!empty($parts['port']) && !in_array((int) $parts['port'], [80, 443], true)) {
@@ -126,19 +126,24 @@ final class WebPushService
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT => 25,
-            CURLOPT_USERAGENT => 'AlertaWiFiMVP/1.0.1',
+            CURLOPT_USERAGENT => 'AlertaWiFiMVP/1.0.2',
+            CURLOPT_IPRESOLVE => CURL_IPRESOLVE_WHATEVER,
         ];
         curl_setopt_array($ch, $options);
+        $started = microtime(true);
         $responseBody = curl_exec($ch);
         $curlError = curl_error($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $durationMs = (int) ((microtime(true) - $started) * 1000);
         curl_close($ch);
 
-        $success = $status >= 200 && $status < 300;
+        $success = in_array($status, [201, 202], true) || ($status >= 200 && $status < 300);
         $expired = in_array($status, [404, 410], true);
         $error = $success ? null : ($curlError ?: ('Serviço Push retornou HTTP ' . $status . ($responseBody ? ': ' . mb_substr((string) $responseBody, 0, 300) : '')));
 
-        $this->writeDiagnosticLog($parts['host'] ?? 'desconhecido', $status, $error);
+        $provider = $parts['host'] ?? 'desconhecido';
+        Logger::info('push_attempt', $meta + ['endpoint' => $endpoint, 'provider' => $provider, 'http_code' => $status, 'duration_ms' => $durationMs, 'curl_error' => $curlError ?: null, 'provider_response' => $responseBody ? mb_substr((string)$responseBody, 0, 500) : null, 'attempt' => $meta['attempt'] ?? 1], 'push');
+        $this->writeDiagnosticLog($provider, $status, $error);
 
         return [
             'success' => $success,
