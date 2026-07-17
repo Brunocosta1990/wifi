@@ -9,7 +9,7 @@ $publicConfig=[
  'eventId'=>(int)$event['id'],'slug'=>$event['slug'],'vapidPublicKey'=>$config['vapid']['public_key'],
  'registerUrl'=>app_url('api/register.php'),'statusUrl'=>app_url('api/status.php'),'subscribeUrl'=>app_url('api/subscribe.php'),
  'unsubscribeUrl'=>app_url('api/unsubscribe.php'),'testPushUrl'=>app_url('api/test_push.php'),'testStatusUrl'=>app_url('api/test_status.php'),'historyUrl'=>app_url('api/history.php'),
- 'pullUrl'=>app_url('api/pull_notification.php'),'serviceWorkerUrl'=>app_url('sw.js?v=1.0.1'),'serviceWorkerScope'=>(parse_url(app_url('/'), PHP_URL_PATH) ?: '/'),'storageKey'=>'alertawifi_participant_'.$event['id']
+ 'clientLogUrl'=>app_url('api/client_log.php'),'pullUrl'=>app_url('api/pull_notification.php'),'serviceWorkerUrl'=>app_url('sw.js?v=1.0.2'),'serviceWorkerScope'=>(parse_url(app_url('/'), PHP_URL_PATH) ?: '/'),'storageKey'=>'alertawifi_participant_'.$event['id']
 ];
 ?>
 <!doctype html>
@@ -58,5 +58,5 @@ $publicConfig=[
 <footer class="footer-note">Notificações autorizadas voluntariamente · Você pode desativá-las a qualquer momento.</footer>
 </main>
 <script>window.ALERTA_WIFI_CONFIG=<?= json_encode($publicConfig,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) ?>;</script>
-<script src="<?= e(app_url('assets/js/public.js?v=1.0.1')) ?>"></script>
+<script src="<?= e(app_url('assets/js/public.js?v=1.0.2')) ?>"></script>
 </body></html>

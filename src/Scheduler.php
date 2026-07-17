@@ -8,10 +8,14 @@ final class Scheduler
         $lockPath = dirname(__DIR__) . '/storage/cron.lock';
         $lockHandle = fopen($lockPath, 'c+');
         if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
+            Logger::warning('cron_lock_busy', [], 'cron');
             return ['processed' => 0, 'success' => 0, 'failed' => 0, 'message' => 'Outro processamento já está em execução.'];
         }
 
-        $summary = ['processed' => 0, 'success' => 0, 'failed' => 0, 'message' => 'OK'];
+        $started = microtime(true);
+        $summary = ['processed' => 0, 'success' => 0, 'failed' => 0, 'expired' => 0, 'message' => 'OK'];
+        Logger::info('cron_started', ['limit' => $limit], 'cron');
+        self::heartbeat('started', $summary);
         try {
             // Recupera mensagens presas após uma interrupção do processo.
             db()->exec("UPDATE messages SET status='scheduled', updated_at=UTC_TIMESTAMP(), last_error='Reprocessamento automático após interrupção.' WHERE status='processing' AND sent_at IS NULL AND updated_at < (UTC_TIMESTAMP() - INTERVAL 10 MINUTE)");
@@ -36,10 +40,14 @@ final class Scheduler
             db()->exec("UPDATE push_queue SET status='expired', updated_at=UTC_TIMESTAMP() WHERE status='pending' AND expires_at <= UTC_TIMESTAMP()");
         } catch (Throwable $e) {
             $summary['message'] = $e->getMessage();
-            error_log('Scheduler error: ' . $e->getMessage());
+            Logger::exception($e, ['summary' => $summary], 'cron');
+            self::heartbeat('error', $summary, $e->getMessage(), (int)((microtime(true)-$started)*1000));
         } finally {
             flock($lockHandle, LOCK_UN);
             fclose($lockHandle);
+            $summary['duration_ms'] = (int)((microtime(true)-$started)*1000);
+            Logger::info('cron_finished', $summary, 'cron');
+            self::heartbeat($summary['message'] === 'OK' ? 'success' : 'finished', $summary, $summary['message'] === 'OK' ? null : $summary['message'], $summary['duration_ms']);
         }
 
         return $summary;
@@ -90,8 +98,12 @@ final class Scheduler
             $actionUrl = app_url($actionUrl);
         }
 
+        $correlationId = $message['correlation_id'] ?: Logger::correlationId();
+        db()->prepare("UPDATE messages SET correlation_id=? WHERE id=? AND (correlation_id IS NULL OR correlation_id='')")->execute([$correlationId, $messageId]);
+
         $payload = [
             'message_id' => (int) $messageId,
+            'correlation_id' => $correlationId,
             'title' => $message['title'],
             'body' => $message['body'],
             'icon' => $message['icon_url'] ?: app_url('assets/icons/icon-192.png'),
@@ -103,14 +115,14 @@ final class Scheduler
         ];
 
         foreach ($targets as $subscription) {
-            $insert = db()->prepare("INSERT INTO message_deliveries (message_id, subscription_id, participant_id, status, attempts, created_at, updated_at) VALUES (?, ?, ?, 'queued', 0, UTC_TIMESTAMP(), UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE updated_at=UTC_TIMESTAMP()");
-            $insert->execute([$messageId, $subscription['id'], $subscription['participant_id']]);
+            $insert = db()->prepare("INSERT INTO message_deliveries (message_id, subscription_id, participant_id, correlation_id, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', 0, UTC_TIMESTAMP(), UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE updated_at=UTC_TIMESTAMP()");
+            $insert->execute([$messageId, $subscription['id'], $subscription['participant_id'], $correlationId]);
 
             $ttl = self::ttlForMessage($message);
-            $queueId = QueueService::enqueue($subscription, $payload, $messageId, max(60, $ttl));
-            $result = $push->sendSignal($subscription, $ttl);
-            $deliveryStatus = $result['success'] ? 'submitted' : ($result['expired'] ? 'expired' : 'failed');
-            $submittedFlag = $deliveryStatus === 'submitted' ? 1 : 0;
+            $queueId = QueueService::enqueue($subscription, $payload, $messageId, max(60, $ttl), $correlationId);
+            $result = $push->sendSignal($subscription, $ttl, ['correlation_id' => $correlationId, 'message_id' => $messageId, 'subscription_id' => (int)$subscription['id'], 'attempt' => 1]);
+            $deliveryStatus = $result['success'] ? 'provider_accepted' : ($result['expired'] ? 'expired' : 'provider_rejected');
+            $submittedFlag = $result['success'] ? 1 : 0;
 
             // Usa flag numérica, evitando comparação textual com collations diferentes.
             db()->prepare("UPDATE message_deliveries SET status=?, response_code=?, attempts=attempts+1, error_message=?, submitted_at=CASE WHEN ?=1 THEN UTC_TIMESTAMP() ELSE submitted_at END, updated_at=UTC_TIMESTAMP() WHERE message_id=? AND subscription_id=?")
@@ -137,6 +149,13 @@ final class Scheduler
             ->execute([$finalStatus, $success, $failed, $lastError, $messageId]);
 
         return ['success' => $success, 'failed' => $failed];
+    }
+
+    private static function heartbeat(string $state, array $summary, ?string $error = null, ?int $durationMs = null): void
+    {
+        try {
+            db()->prepare("INSERT INTO cron_heartbeat (id,last_started_at,last_finished_at,last_success_at,last_error,last_duration_ms,last_summary_json,updated_at) VALUES (1,CASE WHEN ?='started' THEN UTC_TIMESTAMP() ELSE NULL END,CASE WHEN ?<>'started' THEN UTC_TIMESTAMP() ELSE NULL END,CASE WHEN ?='success' THEN UTC_TIMESTAMP() ELSE NULL END,?,?,?,UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE last_started_at=IF(?='started',UTC_TIMESTAMP(),last_started_at), last_finished_at=IF(?<>'started',UTC_TIMESTAMP(),last_finished_at), last_success_at=IF(?='success',UTC_TIMESTAMP(),last_success_at), last_error=VALUES(last_error), last_duration_ms=VALUES(last_duration_ms), last_summary_json=VALUES(last_summary_json), updated_at=UTC_TIMESTAMP()")->execute([$state,$state,$state,$error,$durationMs,json_encode($summary, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),$state,$state,$state]);
+        } catch (Throwable $e) { Logger::exception($e, [], 'cron'); }
     }
 
     private static function ttlForMessage(array $message): int
