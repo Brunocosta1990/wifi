@@ -1,0 +1,22 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)(:\d+)?$ [NC]
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+RewriteRule ^e/([a-zA-Z0-9_-]+)/?$ event.php?slug=$1 [L,QSA]
+</IfModule>
+
+<FilesMatch "(^\.|\.md$|\.sql$|\.log$|composer\.(json|lock)$)">
+Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "SAMEORIGIN"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+</IfModule>
