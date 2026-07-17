@@ -1,0 +1,26 @@
+# Credenciais do sistema
+config/config.php
+
+# Marca de instalação
+storage/installed.lock
+
+# Logs e arquivos temporários
+storage/logs/
+storage/*.log
+storage/cache/
+*.tmp
+
+# Configurações locais
+.env
+.env.*
+!.env.example
+
+# Arquivos compactados e backups
+*.zip
+*.rar
+*.7z
+*.sql.gz
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
