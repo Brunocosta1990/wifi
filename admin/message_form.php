@@ -29,7 +29,7 @@ admin_header('Nova mensagem','messages');
 <label>Modo de envio<select name="send_mode" id="send-mode"><option value="scheduled">Programar horário</option><option value="now">Enviar agora</option></select></label>
 <label id="schedule-field">Data e horário<input name="scheduled_at" type="datetime-local" value="<?= e(date('Y-m-d\TH:i',time()+300)) ?>"></label>
 <label>Validade após o horário<input name="expires_minutes" type="number" min="1" max="1440" value="60"><small>Em minutos. Evita entregar um aviso atrasado.</small></label>
-<div class="help-box span-2">O agendador verifica mensagens a cada minuto. Para envio automático, configure o Cron Job informado em Configurações.</div>
+<div class="help-box span-2">O agendador depende do Cron. Em hospedagem compartilhada, atrasos de 60 a 120 segundos indicam Cron configurado acima de 1 minuto, execução atrasada pelo provedor ou celular/provedor Push em economia de energia. Confira Logs e diagnóstico → Cron frequência e Maior atraso de agendamento.</div>
 <button class="btn btn-primary span-2" type="submit">Salvar mensagem</button>
 </form>
 </section>
