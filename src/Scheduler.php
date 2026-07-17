@@ -20,17 +20,20 @@ final class Scheduler
             // Recupera mensagens presas após uma interrupção do processo.
             db()->exec("UPDATE messages SET status='scheduled', updated_at=UTC_TIMESTAMP(), last_error='Reprocessamento automático após interrupção.' WHERE status='processing' AND sent_at IS NULL AND updated_at < (UTC_TIMESTAMP() - INTERVAL 10 MINUTE)");
 
-            $stmt = db()->prepare("SELECT id FROM messages WHERE status = 'scheduled' AND scheduled_at <= UTC_TIMESTAMP() AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP()) ORDER BY scheduled_at ASC LIMIT " . max(1, min(100, $limit)));
+            $stmt = db()->prepare("SELECT id, scheduled_at, TIMESTAMPDIFF(SECOND, scheduled_at, UTC_TIMESTAMP()) AS schedule_delay_seconds FROM messages WHERE status = 'scheduled' AND scheduled_at <= UTC_TIMESTAMP() AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP()) ORDER BY scheduled_at ASC LIMIT " . max(1, min(100, $limit)));
             $stmt->execute();
-            $ids = array_map('intval', array_column($stmt->fetchAll(), 'id'));
+            $dueMessages = $stmt->fetchAll();
+            Logger::info('cron_due_messages_found', ['count' => count($dueMessages), 'messages' => array_map(static fn(array $row): array => ['id' => (int)$row['id'], 'scheduled_at' => $row['scheduled_at'], 'delay_seconds' => (int)$row['schedule_delay_seconds']], $dueMessages)], 'cron');
 
-            foreach ($ids as $messageId) {
+            foreach ($dueMessages as $dueMessage) {
+                $messageId = (int) $dueMessage['id'];
                 $claim = db()->prepare("UPDATE messages SET status = 'processing', updated_at = UTC_TIMESTAMP() WHERE id = ? AND status = 'scheduled'");
                 $claim->execute([$messageId]);
                 if ($claim->rowCount() !== 1) {
                     continue;
                 }
                 $result = self::processMessage($messageId);
+                $summary['max_schedule_delay_seconds'] = max((int)($summary['max_schedule_delay_seconds'] ?? 0), (int)$dueMessage['schedule_delay_seconds']);
                 $summary['processed']++;
                 $summary['success'] += $result['success'];
                 $summary['failed'] += $result['failed'];
@@ -58,6 +61,9 @@ final class Scheduler
         $stmt = db()->prepare('SELECT m.*, e.slug, e.name AS event_name FROM messages m JOIN events e ON e.id=m.event_id WHERE m.id=? LIMIT 1');
         $stmt->execute([$messageId]);
         $message = $stmt->fetch();
+        if ($message) {
+            Logger::info('message_processing_started', ['message_id' => $messageId, 'event_id' => (int)$message['event_id'], 'scheduled_at' => $message['scheduled_at'], 'schedule_delay_seconds' => max(0, time() - strtotime($message['scheduled_at'] . ' UTC'))], 'cron');
+        }
         if (!$message) {
             return ['success' => 0, 'failed' => 1];
         }
@@ -148,6 +154,7 @@ final class Scheduler
         db()->prepare('UPDATE messages SET status=?, sent_at=UTC_TIMESTAMP(), total_success=?, total_failed=?, last_error=?, updated_at=UTC_TIMESTAMP() WHERE id=?')
             ->execute([$finalStatus, $success, $failed, $lastError, $messageId]);
 
+        Logger::info('message_processing_finished', ['message_id' => $messageId, 'event_id' => (int)$message['event_id'], 'success' => $success, 'failed' => $failed, 'targets' => count($targets)], 'cron');
         return ['success' => $success, 'failed' => $failed];
     }
 
