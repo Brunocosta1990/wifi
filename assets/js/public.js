@@ -5,7 +5,7 @@
   let participantToken = localStorage.getItem(cfg.storageKey) || '';
   let serviceWorkerRegistration = null;
   function clientLog(event, context = {}) {
-    try { fetch(cfg.clientLogUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify({ event, event_id: cfg.eventId, ...context }) }); } catch (_) {}
+    try { if (!cfg.clientLogUrl) return; fetch(cfg.clientLogUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify({ event, event_id: cfg.eventId, ...context }) }); } catch (_) {}
   }
   window.onerror = (message, source, lineno, colno, error) => clientLog('javascript_error', { message: String(message), source, lineno, colno, stack: error?.stack });
   window.onunhandledrejection = (event) => clientLog('javascript_unhandledrejection', { reason: String(event.reason?.message || event.reason || '') });
@@ -48,9 +48,14 @@
     if (!('serviceWorker' in navigator)) { clientLog('service_worker_supported', { supported: false }); throw new Error('Este navegador não suporta Service Worker.'); }
     clientLog('service_worker_supported', { supported: true });
     clientLog('service_worker_registration_started');
-    await navigator.serviceWorker.register(cfg.serviceWorkerUrl, { scope: cfg.serviceWorkerScope || '/' });
-    serviceWorkerRegistration = await navigator.serviceWorker.ready;
-    clientLog('service_worker_registration_success', { scope: serviceWorkerRegistration.scope });
+    try {
+      await navigator.serviceWorker.register(cfg.serviceWorkerUrl, { scope: cfg.serviceWorkerScope || '/' });
+      serviceWorkerRegistration = await navigator.serviceWorker.ready;
+      clientLog('service_worker_registration_success', { scope: serviceWorkerRegistration.scope });
+    } catch (error) {
+      clientLog('service_worker_registration_failed', { message: error?.message || String(error) });
+      throw error;
+    }
     return serviceWorkerRegistration;
   }
 
@@ -141,6 +146,7 @@
 
   $('#enable-push')?.addEventListener('click', async () => {
     clearAlert(); const button = $('#enable-push'); button.disabled = true;
+    let pushPhase = 'permission';
     try {
       if (!window.isSecureContext) throw new Error('As notificações exigem HTTPS.');
       if (!('Notification' in window) || !('PushManager' in window)) throw new Error('Este navegador não oferece suporte a Web Push.');
@@ -157,12 +163,14 @@
       clientLog('subscription_lookup_success', { found: Boolean(subscription) });
       if (!subscription) {
         clientLog('subscription_create_started');
+        pushPhase = 'create';
         subscription = await serviceWorkerRegistration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(cfg.vapidPublicKey)
         });
         clientLog('subscription_create_success');
       }
+      pushPhase = 'save';
       await api(cfg.subscribeUrl, {
         method: 'POST',
         body: JSON.stringify({
@@ -173,11 +181,13 @@
           permission: Notification.permission
         })
       });
+      pushPhase = 'configured';
       clientLog('subscription_saved_to_server');
       await configureServiceWorker();
       setPushState(true);
       showAlert('Notificações ativadas neste aparelho.', 'success');
     } catch (error) {
+      clientLog(pushPhase === 'save' ? 'subscription_save_failed' : 'subscription_create_failed', { phase: pushPhase, message: error?.message || String(error) });
       showAlert(error.message);
       setPushState(false, currentPermission());
     } finally { button.disabled = false; }
