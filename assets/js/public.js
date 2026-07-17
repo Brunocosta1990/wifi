@@ -4,6 +4,13 @@
   const alertBox = $('#global-alert');
   let participantToken = localStorage.getItem(cfg.storageKey) || '';
   let serviceWorkerRegistration = null;
+  function clientLog(event, context = {}) {
+    try { fetch(cfg.clientLogUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', body: JSON.stringify({ event, event_id: cfg.eventId, ...context }) }); } catch (_) {}
+  }
+  window.onerror = (message, source, lineno, colno, error) => clientLog('javascript_error', { message: String(message), source, lineno, colno, stack: error?.stack });
+  window.onunhandledrejection = (event) => clientLog('javascript_unhandledrejection', { reason: String(event.reason?.message || event.reason || '') });
+  clientLog('page_loaded', { href: location.href });
+  clientLog('https_check', { secure: window.isSecureContext });
 
   function showAlert(message, type = 'error') {
     alertBox.textContent = message;
@@ -38,9 +45,12 @@
   }
 
   async function setupServiceWorker() {
-    if (!('serviceWorker' in navigator)) throw new Error('Este navegador não suporta Service Worker.');
+    if (!('serviceWorker' in navigator)) { clientLog('service_worker_supported', { supported: false }); throw new Error('Este navegador não suporta Service Worker.'); }
+    clientLog('service_worker_supported', { supported: true });
+    clientLog('service_worker_registration_started');
     await navigator.serviceWorker.register(cfg.serviceWorkerUrl, { scope: cfg.serviceWorkerScope || '/' });
     serviceWorkerRegistration = await navigator.serviceWorker.ready;
+    clientLog('service_worker_registration_success', { scope: serviceWorkerRegistration.scope });
     return serviceWorkerRegistration;
   }
 
@@ -135,15 +145,23 @@
       if (!window.isSecureContext) throw new Error('As notificações exigem HTTPS.');
       if (!('Notification' in window) || !('PushManager' in window)) throw new Error('Este navegador não oferece suporte a Web Push.');
       if (isIos() && !isStandalone()) throw new Error('No iPhone, adicione esta página à Tela de Início e abra pelo ícone antes de ativar.');
+      clientLog('notification_permission_current', { permission: currentPermission() });
+      clientLog('notification_permission_requested');
       const permission = await Notification.requestPermission();
+      clientLog(permission === 'granted' ? 'notification_permission_granted' : 'notification_permission_denied', { permission });
       if (permission !== 'granted') throw new Error('A permissão de notificações não foi concedida.');
       await setupServiceWorker();
+      clientLog('push_manager_supported', { supported: Boolean(serviceWorkerRegistration.pushManager) });
+      clientLog('subscription_lookup_started');
       let subscription = await serviceWorkerRegistration.pushManager.getSubscription();
+      clientLog('subscription_lookup_success', { found: Boolean(subscription) });
       if (!subscription) {
+        clientLog('subscription_create_started');
         subscription = await serviceWorkerRegistration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(cfg.vapidPublicKey)
         });
+        clientLog('subscription_create_success');
       }
       await api(cfg.subscribeUrl, {
         method: 'POST',
@@ -151,9 +169,11 @@
           event_id: cfg.eventId,
           participant_token: participantToken,
           subscription: subscription.toJSON(),
-          platform: navigator.userAgentData?.platform || navigator.platform || ''
+          platform: navigator.userAgentData?.platform || navigator.platform || '',
+          permission: Notification.permission
         })
       });
+      clientLog('subscription_saved_to_server');
       await configureServiceWorker();
       setPushState(true);
       showAlert('Notificações ativadas neste aparelho.', 'success');
@@ -164,19 +184,21 @@
   });
 
   $('#test-push')?.addEventListener('click', async () => {
+    clientLog('test_push_requested');
     clearAlert(); const button = $('#test-push'); button.disabled = true;
     try {
       await configureServiceWorker();
       const result = await api(cfg.testPushUrl, {
         method: 'POST',
-        body: JSON.stringify({ event_id: cfg.eventId, participant_token: participantToken })
+        body: JSON.stringify({ event_id: cfg.eventId, participant_token: participantToken, endpoint: (await serviceWorkerRegistration.pushManager.getSubscription())?.endpoint || '' })
       });
+      clientLog('test_push_response', { correlation_id: result.correlation_id, http_status: result.http_status });
       showAlert(`Sinal enviado ao serviço Push (HTTP ${result.http_status}). Aguardando confirmação do aparelho...`, 'success');
 
       let confirmed = false;
       for (let attempt = 0; attempt < 6; attempt++) {
         await delay(1500);
-        const status = await api(`${cfg.testStatusUrl}?event_id=${cfg.eventId}&token=${encodeURIComponent(participantToken)}&sent_at=${encodeURIComponent(result.sent_at)}`);
+        const status = await api(`${cfg.testStatusUrl}?event_id=${cfg.eventId}&token=${encodeURIComponent(participantToken)}&sent_at=${encodeURIComponent(result.sent_at)}&correlation_id=${encodeURIComponent(result.correlation_id || '')}`);
         if (status.received) {
           confirmed = true;
           showAlert('Teste concluído: o aparelho recebeu o sinal e buscou a notificação.', 'success');

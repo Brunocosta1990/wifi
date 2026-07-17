@@ -30,6 +30,7 @@ function admin_header(string $title, string $active = ''): void
                 'participants' => ['Participantes', 'participants.php'],
                 'messages' => ['Mensagens', 'messages.php'],
                 'settings' => ['Configurações', 'settings.php'],
+                'diagnostics' => ['Logs e diagnóstico', 'diagnostics.php'],
             ];
             foreach ($items as $key => [$label, $file]): ?>
                 <a class="<?= $active === $key ? 'active' : '' ?>" href="<?= e(app_url('admin/' . $file)) ?>"><?= e($label) ?></a>

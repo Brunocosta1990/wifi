@@ -1,4 +1,4 @@
-# Alerta Wi-Fi MVP 1.0.1
+# Alerta Wi-Fi MVP 1.0.2
 
 Sistema em PHP + MySQL para cadastrar participantes, solicitar autorização de Web Push e enviar mensagens imediatas ou programadas.
 
@@ -17,6 +17,7 @@ Sistema em PHP + MySQL para cadastrar participantes, solicitar autorização de 
 - Cron Job;
 - confirmação de sinal aceito e aparelho recebido;
 - diagnóstico de HTTP, erros e logs;
+- painel de Logs e diagnóstico com correlation ID;
 - reparo automático de charset e collation;
 - funcionamento sem Composer, Firebase ou OneSignal.
 
@@ -40,7 +41,7 @@ Sistema em PHP + MySQL para cadastrar participantes, solicitar autorização de 
 
 ## Atualização de uma instalação 1.0.0
 
-Leia `ATUALIZACAO_1.0.1.md`.
+Leia `ATUALIZACAO_1.0.2.md`.
 
 Resumo:
 
@@ -62,7 +63,7 @@ curl -fsS "https://SEU-DOMINIO/cron_web.php?token=TOKEN" >/dev/null 2>&1
 
 Sem Cron, o envio imediato funciona, mas as mensagens futuras não serão processadas automaticamente.
 
-## Como o Push funciona na versão 1.0.1
+## Como o Push funciona na versão 1.0.2
 
 ```text
 Painel programa a mensagem
